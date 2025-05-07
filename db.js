@@ -7,4 +7,8 @@ const pool = mysql.createPool({
     database: 'pjatk',
 });
 
+pool.getConnection()
+    .then(() => console.log('Połączono z bazą danych!'))
+    .catch((err) => console.error('Błąd połączenia z bazą danych:', err));
+
 module.exports = pool;

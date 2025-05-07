@@ -9,6 +9,9 @@ const crypto = require('crypto');
 const {raw} = require("mysql2");
 
 const sessions = {}; // Przechowywanie wyzwań w pamięci
+const origin = 'http://localhost:5173';
+const rpName = 'LSPD Database'
+const rpID = 'localhost'
 
 // Endpoint do generowania opcji logowania
 router.get('/login-options', async (req, res) => {
@@ -89,12 +92,21 @@ router.post('/register-options', async (req, res) => {
 
     try {
         // Sprawdź, czy użytkownik już istnieje w bazie danych
-        const [users] = await pool.query('SELECT * FROM users WHERE username = ?', [
-            username,
-        ]);
+        const [users] = await pool.query(`
+            SELECT users.id, users.username, credentials.credential_id 
+            FROM users 
+            LEFT JOIN credentials 
+            ON users.id = credentials.user_id 
+            WHERE users.username = ?`,
+            [username]
+        );
 
         if (users.length > 0) {
-            return res.status(400).json({ error: 'Użytkownik już istnieje.' });
+            // Sprawdź, czy użytkownik ma już przypisane credentials
+            const user = users[0];
+            if (user.credential_id) {
+                return res.status(400).json({ error: 'Użytkownik już istnieje i posiada credentials.' });
+            }
         }
 
         // Generowanie unikalnego identyfikatora użytkownika
@@ -102,8 +114,8 @@ router.post('/register-options', async (req, res) => {
 
         // Tworzenie opcji rejestracji
         const options = generateRegistrationOptions({
-            rpName: 'LSPD Database',
-            rpID: 'localhost',
+            rpName,
+            rpID,
             userID: userId, // Tablica bajtów zamiast ciągu znaków
             userName: username, // Nazwa użytkownika
             userDisplayName: username, // Wyświetlana nazwa użytkownika
@@ -116,7 +128,8 @@ router.post('/register-options', async (req, res) => {
         // Przechowaj wyzwanie i identyfikator użytkownika w sesji
         sessions[username] = {
             challenge: toBase64UrlSafe((await options).challenge),
-            userId: userId.toString('base64'), // Zachowaj identyfikator w formacie Base64
+            userId: userId.toString('base64'),
+            userDisplayName: username// Zachowaj identyfikator w formacie Base64
         };
 
         // Zwróć opcje rejestracji do frontend
@@ -136,6 +149,9 @@ router.post('/register-verify', async (req, res) => {
         return res.status(400).json({ error: 'Missing credential data' });
     }
 
+    const expectedRPIDHash = crypto.createHash('sha256').update('localhost').digest('base64');
+
+    console.log('Expected RPID Hash:', expectedRPIDHash);
 
     const session = Object.values(sessions).find((s) => {
         const clientData = decodeClientDataJSON(response.clientDataJSON);
@@ -146,27 +162,46 @@ router.post('/register-verify', async (req, res) => {
         return res.status(400).json({ error: 'Nieprawidłowe wyzwanie.' });
     }
 
-    console.log(id, rawId)
+    const rpID = 'localhost';
+    const encoder = new TextEncoder();
+    const rpIDHash = await crypto.subtle.digest('SHA-256', encoder.encode(rpID));
+    //console.log(new Uint8Array(rpIDHash));
+
 
     const verification = await verifyRegistrationResponse({
         response: {
             id,
             rawId,
             response: {
-                attestationObject: Buffer.from(response.attestationObject, 'base64'),
-                clientDataJSON: Buffer.from(response.clientDataJSON, 'base64'),
+                attestationObject: response.attestationObject,
+                clientDataJSON: response.clientDataJSON,
             },
             type,
         },
         expectedChallenge: session.challenge,
-        expectedOrigin: 'http://localhost:5173',
-        expectedRPID: 'localhost',
+        expectedOrigin: origin,
+        expectedRPID: rpID,
     });
 
 
     console.log(verification)
 
     if (verification.verified) {
+        // Sprawdź, czy użytkownik istnieje w tabeli users
+        const [userExists] = await pool.query(
+            'SELECT id FROM users WHERE id = ?',
+            [session.userId]
+        );
+
+        // Jeśli użytkownik nie istnieje, dodaj go do tabeli users
+        if (userExists.length === 0) {
+            await pool.query(
+                'INSERT INTO users (id, username) VALUES (?, ?)',
+                [session.userId, session.userDisplayName] // Zamień na odpowiednie wartości
+            );
+        }
+
+        // Wstaw dane do tabeli credentials
         await pool.query(
             'INSERT INTO credentials (user_id, credential_id, public_key, counter) VALUES (?, ?, ?, ?)',
             [session.userId, id, response.attestationObject, 0]
@@ -176,6 +211,7 @@ router.post('/register-verify', async (req, res) => {
     } else {
         res.status(400).json({ error: 'Weryfikacja nie powiodła się.' });
     }
+
 });
 
 function toBase64UrlSafe(buffer) {

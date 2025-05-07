@@ -8,6 +8,9 @@ var cors = require('cors')
 var indexRouter = require('./routes/index');
 var usersRouter = require('./routes/users');
 var webauthnRoutes = require('./routes/webauthn');
+var citzensRoutes = require('./routes/citizens');
+var recordsRoutes = require('./routes/records');
+var vehiclesRoutes = require('./routes/vehicles');
 
 var app = express();
 
@@ -23,13 +26,15 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.use(cors({
   origin: 'http://localhost:5173',
-  methods: ['GET', 'POST', 'OPTIONS'],
+  methods: ['GET', 'POST', 'OPTIONS', 'DELETE'],
   credentials: true // Jeśli używasz ciasteczek lub uwierzytelniania
 }));
 
 app.use('/', indexRouter);
-app.use('/users', usersRouter);
+app.use('/citizens', citzensRoutes);
+app.use('/vehicles', vehiclesRoutes);
 app.use('/webauthn', webauthnRoutes);
+app.use('/records', recordsRoutes);
 
 app.listen(3001, () => {
   console.log(`Serwer działa na http://localhost:3001`);
