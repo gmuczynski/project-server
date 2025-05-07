@@ -4,7 +4,7 @@ const pool = require('../db'); // Połączenie z bazą danych
 
 router.get('/', async (req, res) => {
     try {
-        const [records] = await pool.query('SELECT * FROM police_records'); // Zmień na odpowiednią nazwę tabeli
+        const [records] = await pool.query('SELECT * FROM police_records');
         res.json(records);
     } catch (error) {
         console.error('Błąd podczas pobierania rekordów:', error);
